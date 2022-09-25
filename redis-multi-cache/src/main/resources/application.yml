@@ -1,0 +1,85 @@
+spring:
+  # redis 集群下
+  redis:
+    database: 0
+    password: 123456
+    cluster:
+      max-redirects: 3
+      nodes:
+        - 192.168.66.11:7000
+        - 192.168.66.11:7001
+        - 192.168.66.11:7002
+        - 192.168.66.11:7003
+        - 192.168.66.11:7004
+        - 192.168.66.11:7005
+    lettuce:
+      pool:
+        # 连接池最大连接数（使用负值表示没有限制） 默认 8
+        max-active:  50
+        # 连接池中的最大空闲连接 默认 8
+        max-idle: 20
+        # 连接池中的最小空闲连接 默认 0
+        min-idle: 1
+        # 连接池最大阻塞等待时间(使用负值表示没有限制) 默认 -1，这里配置10s
+        max-wait: PT10S
+    redisson:
+      config: |
+        clusterServersConfig:
+          idleConnectionTimeout: 10000
+          connectTimeout: 10000
+          timeout: 3000
+          retryAttempts: 3
+          retryInterval: 1500
+          failedSlaveReconnectionInterval: 3000
+          failedSlaveCheckInterval: 60000
+          password: null
+          subscriptionsPerConnection: 5
+          clientName: null
+          loadBalancer: !<org.redisson.connection.balancer.RoundRobinLoadBalancer> {}
+          subscriptionConnectionMinimumIdleSize: 1
+          subscriptionConnectionPoolSize: 50
+          slaveConnectionMinimumIdleSize: 24
+          slaveConnectionPoolSize: 64
+          masterConnectionMinimumIdleSize: 24
+          masterConnectionPoolSize: 64
+          readMode: "SLAVE"
+          subscriptionMode: "SLAVE"
+          nodeAddresses:
+          - "redis://192.168.66.11:7000"
+          - "redis://192.168.66.11:7001"
+          - "redis://192.168.66.11:7002"
+          scanInterval: 1000
+          pingConnectionInterval: 0
+          keepAlive: false
+          tcpNoDelay: false
+        threads: 16
+        nettyThreads: 32
+        codec: !<org.redisson.codec.MarshallingCodec> {}
+        transportMode: "NIO"
+#  redis:
+#    # Redis默认情况下有16个分片(库)，这里配置具体使用的分片，默认是0
+#    database: 0
+#    # redis服务器地址（填写自己的服务器地址）
+#    host: 192.168.66.11
+#    # redis端口（默认6379）
+#    port: 6379
+#    #redis连接超时等待,10秒
+#    timeout: PT10S
+#    # redis访问密码（默认为空）
+#    password: xxxx
+#    lettuce:
+#      pool:
+#        # 连接池最大连接数（使用负值表示没有限制） 默认 8
+#        max-active:  50
+#        # 连接池中的最大空闲连接 默认 8
+#        max-idle: 20
+#        # 连接池中的最小空闲连接 默认 0
+#        min-idle: 1
+#        # 连接池最大阻塞等待时间(使用负值表示没有限制) 默认 -1，这里配置10s
+#        max-wait: PT10S
+
+
+
+server:
+  port: 8081
+
