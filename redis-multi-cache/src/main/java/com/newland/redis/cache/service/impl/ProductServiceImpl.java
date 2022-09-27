@@ -8,6 +8,7 @@ import com.newland.redis.cache.mapper.ProductMapper;
 import com.newland.redis.cache.service.ProductService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.redisson.Redisson;
+import org.redisson.api.RBloomFilter;
 import org.redisson.api.RLock;
 import org.redisson.api.RReadWriteLock;
 import org.redisson.api.RedissonClient;
@@ -21,10 +22,10 @@ import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
+import static com.newland.redis.cache.common.RedisKeyPrefixconst.PRODUCT_CACHE_BLOOM_FILTER;
+
 /**
- * <p>
- * 服务实现类
- * </p>
+ * 高并发之redisson分布式锁的方案实现
  *
  * @author leellun
  * @since 2022-09-25
@@ -65,11 +66,18 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         return product;
     }
 
+    /**
+     * double checked locking
+     *
+     * @param productId
+     * @return
+     */
     @Override
     public Product getProduct(Long productId) {
         String productCacheKey = RedisKeyPrefixconst.PRODUCT_CACHE + productId;
         Product product = getProductFromCache(productCacheKey);
         if (product != null) {
+            if (product.getId() == null) return null;
             return product;
         }
         RLock hotCacheCreateLock = redissonClient.getLock(LOCK_PRODUCT_HOT_CACHE_CLEAR_PREFIX + productId);
@@ -79,6 +87,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         try {
             product = getProductFromCache(productCacheKey);
             if (product != null) {
+                if (product.getId() == null) return null;
                 return product;
             }
             RReadWriteLock productUpdateLock = redissonClient.getReadWriteLock(LOCK_PRODUCT_UPDATE_PREFIX + product.getId());
@@ -92,11 +101,62 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
                     redisutil.set(productCacheKey, JSON.toJSONString(product), getProductCacheTimeout());
                     cacheMap.put(productCacheKey, product);
                 } else {
+                    RBloomFilter<Long> bloomFilter = redissonClient.getBloomFilter(PRODUCT_CACHE_BLOOM_FILTER + productId);
+                    bloomFilter.tryInit(productId, 0.03);
+                    bloomFilter.add(productId);
+                    bloomFilter.contains(productId);
                     /**
                      * 防止内存穿透 带来的性能消耗问题
                      */
                     redisutil.set(productCacheKey, EMPTY_CACHE, getEmptyCacheTimeout());
                     cacheMap.put(productCacheKey, new Product());
+                }
+            } finally {
+                cacheMap.remove(productCacheKey);
+                rLock.unlock();
+            }
+        } finally {
+            hotCacheCreateLock.unlock();
+        }
+
+
+        return product;
+    }
+
+    /**
+     * 高并发之redisson分布式锁的方案实现
+     * @param productId
+     * @return
+     */
+    public Product getProduct2(Long productId) {
+        RBloomFilter<Long> bloomFilter = redissonClient.getBloomFilter(PRODUCT_CACHE_BLOOM_FILTER);
+        bloomFilter.tryInit(100000000L, 0.03);
+        String productCacheKey = RedisKeyPrefixconst.PRODUCT_CACHE + productId;
+        Product product = getProductFromCache(productCacheKey);
+        if (product != null || bloomFilter.contains(productId)) {
+            return product;
+        }
+        RLock hotCacheCreateLock = redissonClient.getLock(LOCK_PRODUCT_HOT_CACHE_CLEAR_PREFIX + productId);
+        hotCacheCreateLock.lock();
+        //如果采用trylock，当数据库查找存在偶尔延迟操作可以提高效率；弊端：存在同一时刻查询mysql量陡增的风险
+//        hotCacheCreateLock.tryLock(3, TimeUnit.MINUTES);
+        try {
+            product = getProductFromCache(productCacheKey);
+            if (product != null || bloomFilter.contains(productId)) {
+                return product;
+            }
+            RReadWriteLock productUpdateLock = redissonClient.getReadWriteLock(LOCK_PRODUCT_UPDATE_PREFIX + product.getId());
+            RLock rLock = productUpdateLock.readLock();
+            try {
+                /**
+                 * 数据库数据查询
+                 */
+                product = baseMapper.selectById(productId);
+                if (product != null) {
+                    redisutil.set(productCacheKey, JSON.toJSONString(product), getProductCacheTimeout());
+                    cacheMap.put(productCacheKey, product);
+                } else {
+                    bloomFilter.add(productId);
                 }
             } finally {
                 cacheMap.remove(productCacheKey);
@@ -116,11 +176,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
          */
         Product product = cacheMap.get(productCacheKey);
         if (product != null) {
-            if (product.getId() == null) {
-                return null;
-            } else {
-                return product;
-            }
+            return product;
         }
         /**
          * redis 内存数据库级别缓存
@@ -128,7 +184,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         String productStr = (String) redisutil.get(productCacheKey);
         if (!StringUtils.isEmpty(productStr)) {
             if (EMPTY_CACHE.equals(productStr)) {
-                return null;
+                return new Product();
             }
             product = JSON.parseObject(productStr, Product.class);
         }
